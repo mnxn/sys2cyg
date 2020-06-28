@@ -1,0 +1,611 @@
+#!/bin/bash
+
+set -e
+
+## begin constants ##
+
+USAGE="Download MSYS2 MinGW packages for Cygwin.
+
+Usage: sys2cyg <command>
+
+Commands:
+	help                   show this help message
+	info <package>         show information about the package
+	install <package>      download and install a package
+	list                   list installed packages
+	search <package>       search for a package
+	uninstall <package>    uninstall a package
+	update                 update the package index
+	url <package>          navigate to a package's url
+	
+Set the \$MINGW_TYPE environmental variable to 32 to use the 32-bit MinGW packages."
+
+MINGW_TYPE=${MINGW_TYPE:-64}
+if [[ $MINGW_TYPE == 64 ]]; then
+	REPO="http://repo.msys2.org/mingw/x86_64"
+	MSYS2_PREFIX="mingw64"
+	PACKAGE_PREFIX="mingw-w64-x86_64"
+	INSTALL_PREFIX=/usr/x86_64-w64-mingw32/sys-root/mingw/
+elif [[ $MINGW_TYPE == 32 ]]; then
+	REPO="http://repo.msys2.org/mingw/i686"
+	MSYS2_PREFIX="mingw32"
+	PACKAGE_PREFIX="mingw-w64-i686"
+	INSTALL_PREFIX=/usr/i686-w64-mingw32/sys-root/mingw/
+else
+	echo "Invalid \$MINGW_TYPE - $MINGW_TYPE." >&2
+	exit 1
+fi
+
+## end constants ##
+
+## begin helper functions ##
+
+function echo_err() { # echos to stderr
+	echo $@ >&2
+}
+
+function contains() { # check if an array contains an element
+	local array_name=$1
+	local target=$2
+
+	local -n local_array=$array_name
+
+	for element in "${local_array[@]}"; do
+		if [[ "$element" == "$target" ]]; then
+			return 0
+		fi
+	done
+
+	return 1
+}
+
+function present() { # checks that a folder exists and is not empty
+	local directory=$1
+
+	[[ -d $directory && "$(ls -A $directory)" ]]
+}
+
+function count_lines() { # counts the number of lines by line beginnings
+	grep -c '^' $@
+}
+
+function required() { # verifies that the correct amount of arguments are supplied to the command
+	local command_name=$1
+	local args_required=$2
+	read -r -a arguments <<<"$@"
+
+	local args_given=$((${#arguments[@]} - 3))
+
+	if [[ $args_given > $args_required ]]; then
+		echo_err "Too many arguments given for $command_name command."
+		printf "\tGiven:    $args_given\n" >&2
+		printf "\tRequired: $args_required\n" >&2
+		exit 1
+	elif [[ $args_given < $args_required ]]; then
+		echo_err "Missing required arguments for $command_name command."
+		printf "\tGiven:    $args_given\n" >&2
+		printf "\tRequired: $args_required\n" >&2
+		exit 1
+	fi
+}
+
+function indent() { # indents each line with a tab
+	sed 's/^/\t/'
+}
+
+function add_prefix() { # adds the MinGW prefix
+	sed "s/^/$PACKAGE_PREFIX-/"
+}
+
+function remove_prefix() { # removes the MinGW prefix
+	sed "s/$PACKAGE_PREFIX-//"
+}
+
+function pretty_version() { # pretty print the package with its version given a full package name
+	sed --regexp-extended 's/(.*)-(.*-.*)/\1 (version \2)/'
+}
+
+function optional_version() { # pretty print the package given an optional version suffix
+	sed --regexp-extended 's/(.*)=(.*-.*)/\1 (version \2)/'
+}
+
+function check_index() { # checks that the index has been downloaded
+	if ! present ~/.sys2cyg/index/; then
+		echo_err "The package index has not been downloaded. Run sys2cyg update."
+		exit 1
+	fi
+}
+
+function get_desc_file() { # returns the description file given a full package name
+	local full_package_name=$1
+
+	local desc_file=~/.sys2cyg/index/$full_package_name/desc
+
+	if [[ ! -f "$desc_file" ]]; then
+		echo_err "Missing description file for package $full_package_name. Has the index been updated?"
+		exit 1
+	fi
+
+	echo $desc_file
+}
+
+function parse_desc() { # parses the "desc" file format for a certain header
+	local output_name=$1
+	local target_header=$2
+	local desc_file=$3
+
+	local -n output=$output_name # assign to a nameref
+
+	local target_regex="^%$target_header%$"
+	local in_target=false
+
+	while read line; do
+		if [[ $line =~ $target_regex ]]; then
+			in_target=true
+		elif [[ $line =~ ^%.*%$ ]]; then
+			in_target=false
+		elif [[ $in_target == true && -n $line ]]; then
+			output+=("$line")
+		fi
+	done <<<$(cat $desc_file)
+}
+
+function short_name() { # gets the short name given a full package name with version
+	sed --regexp-extended "s/$PACKAGE_PREFIX-(.*)-.*-.*/\1/"
+}
+
+function infer_package() { # infers the full package name given a short name
+	local package_name=$1
+
+	local exact=$(ls -1 ~/.sys2cyg/index/ |
+		grep --line-regexp \
+			--extended-regexp "($PACKAGE_PREFIX-)?$package_name(\-git)?(\-[^-]+)?(\-[^-]+)?")
+
+	if [[ -n $exact ]]; then
+		echo $exact
+	else
+		echo_err "Could not find package $package_name."
+
+		local possible=$(ls -1 ~/.sys2cyg/index/ |
+			grep --extended-regexp "$PACKAGE_PREFIX-$package_name")
+		if [[ -n $possible ]]; then
+			echo_err
+			echo_err "Possible packages:"
+			echo "$possible" |
+				short_name |
+				tr '\n' ' ' |
+				indent >&2
+		fi
+		exit 1
+	fi
+}
+
+function is_dependent() { # checks if a package is a dependent of another
+	local full_package_name=$1
+	local possible_dependent=$2
+
+	check_index
+
+	if ! present ~/.sys2cyg/index/$full_package_name/; then
+		echo_err "Missing installation entry for package $full_package_name."
+		echo_err "Installation may be corrupt."
+		exit 1
+	fi
+
+	[[ -f ~/.sys2cyg/index/$full_package_name/dependents && \
+	$(cat ~/.sys2cyg/index/$full_package_name/dependents |
+		grep --line-regexp "$possible_dependent" |
+		count_lines) > 0 ]]
+}
+
+function add_dependent() { # adds a dependent to the dependents list for a package
+	local full_package_name=$1
+	local dependent=$2
+
+	check_index
+
+	if ! present ~/.sys2cyg/index/$full_package_name/; then
+		echo_err "Missing installation entry for package $full_package_name."
+		echo_err "Installation may be corrupt."
+		exit 1
+	fi
+
+	if ! is_dependent "$full_package_name" "$dependent"; then
+		echo $dependent >>~/.sys2cyg/index/$full_package_name/dependents
+	fi
+}
+
+function collect_dependencies() { # collects the entire dependency tree given a full package name
+	local full_package_name=$1
+
+	local desc_file=
+	desc_file=$(get_desc_file $full_package_name)
+
+	local -n dependencies_output=$2
+	local -n conflicts_output=$3
+
+	declare -a local_dependencies=()
+	parse_desc local_dependencies "DEPENDS" "$desc_file"
+
+	declare -a local_conflicts=()
+	parse_desc local_conflicts "CONFLICTS" "$desc_file"
+
+	for dependency in "${local_dependencies[@]}"; do
+		if [[ $dependency == "winpty" ]]; then
+			echo_err "WARNING: This packages depends on winpty. winpty must be installed from Cygwin setup."
+			continue
+		fi
+
+		dependency=$(infer_package $(echo $dependency | sed 's/(<|>)?=?/-/'))
+		add_dependent "$dependency" "$full_package_name"
+		if ! contains dependencies_output "$dependency"; then
+			collect_dependencies $dependency $2 $3
+		fi
+	done
+
+	dependencies_output+=("$full_package_name")
+	conflicts_output+=("${local_conflicts[@]}")
+}
+
+## end helper functions ##
+
+## begin commands ##
+
+function help() { # show the help message
+	echo "$USAGE"
+}
+
+function info() { #  show information about the package
+	local package_name=$1
+
+	check_index
+
+	local full_package_name
+	full_package_name=$(infer_package $package_name)
+
+	local desc_file
+	desc_file=$(get_desc_file $full_package_name)
+
+	echo "Package $package_name:"
+
+	declare -a version=()
+	parse_desc version "VERSION" "$desc_file"
+	printf "\tVersion: ${version[0]}\n"
+
+	declare -a desc=()
+	parse_desc desc "DESC" "$desc_file"
+	printf "\tDescription: ${desc[0]}\n"
+
+	echo
+
+	declare -a url=()
+	parse_desc url "URL" "$desc_file"
+	printf "\tURL: ${url[0]}\n"
+
+	declare -a licenses=()
+	parse_desc licenses "LICENSE" "$desc_file"
+	printf "\tLicenses: ${licenses[*]}\n" | sed 's/custom://'
+
+	echo
+
+	declare -a build_date=()
+	parse_desc build_date "BUILDDATE" "$desc_file"
+	local readable_date=$(date --date=@$build_date)
+	printf "\tBuild Date: ${readable_date}\n"
+
+	declare -a dependencies=()
+	parse_desc dependencies "DEPENDS" "$desc_file"
+	if [[ ${dependencies[@]} ]]; then
+		echo
+		printf "\tDependencies:\n"
+		printf '\t\t%s\n' "${dependencies[@]}" |
+			remove_prefix |
+			optional_version
+	fi
+
+	declare -a conflicts=()
+	parse_desc conflicts "CONFLICTS" "$desc_file"
+	if [[ ${conflicts[@]} ]]; then
+		echo
+		printf "\tConflicts:\n"
+		printf '\t\t%s\n' "${conflicts[@]}" |
+			remove_prefix |
+			optional_version
+	fi
+}
+
+function install() { # download and install a package
+	local package_name=$1
+
+	check_index
+
+	local full_package_name
+	full_package_name=$(infer_package $package_name)
+
+	declare -a dependencies
+	declare -a conflicts
+	echo -n "Collecting dependencies, please wait ... "
+	collect_dependencies $full_package_name dependencies conflicts
+	echo "done."
+	echo
+
+	local have_conflicting=false
+	for conflict in "${conflicts[@]}"; do
+		if present ~/.sys2cyg/installed/; then
+			local conflicting=$(ls -1 ~/.sys2cyg/installed/ |
+				sed 's/(<|>)?=?/-/' |
+				grep --line-regexp --extended-regexp "$conflict\-[^-]+\-[^-]+")
+
+			if [[ -n $conflicting ]]; then
+				echo_err "Installed packages have conflicts with package $(echo $full_package_name |
+					remove_prefix |
+					pretty_version):"
+				echo "$conflicting" |
+					remove_prefix |
+					pretty_version |
+					indent >&2
+				have_conflicting=true
+			fi
+		fi
+	done
+	if [[ $have_conflicting == true ]]; then
+		echo_err
+		echo_err "Conflicting packages were detected."
+		read -ep "Continue anyway? (y/n) " yn
+		case $yn in
+		[Yy]*) echo ;;
+		*)
+			echo "Installation cancelled."
+			exit 1
+			;;
+		esac
+	fi
+
+	if [[ ${#dependencies[@]} > 1 ]]; then
+		echo "${#dependencies[@]} packages will be installed:"
+		printf '\t%s\n' "${dependencies[@]}" |
+			remove_prefix |
+			pretty_version
+	else
+		echo "$(echo $full_package_name | remove_prefix | pretty_version) will be installed."
+	fi
+
+	read -ep "Continue? (y/n) " yn
+	case $yn in
+	[Yy]*) ;;
+	*)
+		echo "Install cancelled."
+		exit
+		;;
+	esac
+
+	echo
+
+	for package in "${dependencies[@]}"; do
+		local desc_file=
+		desc_file=$(get_desc_file $package)
+
+		declare -a filename=()
+		parse_desc filename "FILENAME" "$desc_file"
+
+		if [[ -z $filename ]]; then
+			echo_err "Error reading %FILENAME% from $package description"
+			exit 1
+		fi
+
+		local archive_url="$REPO/${filename[0]}"
+
+		local extension=${filename##*.}
+		local decompress
+		if [[ $extension == zst ]]; then
+			decompress="zstd --decompress"
+		elif [[ $extension == xz ]]; then
+			decompress="xz --decompress"
+		else
+			echo_err "Unknown archive extension .$extension for package $(echo $package |
+				remove_prefix |
+				pretty_version)."
+			exit 1
+		fi
+
+		echo -n "Installing $(echo $package | remove_prefix | pretty_version) ... "
+		mkdir --parents $INSTALL_PREFIX &&
+			mkdir --parents ~/.sys2cyg/installed/$package &&
+			curl --silent --location $archive_url |
+			$decompress |
+				tar --extract --verbose \
+					--show-transformed \
+					--strip-components 1 \
+					--directory $INSTALL_PREFIX |
+				sed "s|^|$INSTALL_PREFIX|" \
+					>~/.sys2cyg/installed/$package/files &&
+			echo "done." || echo_err "installation failed."
+	done
+}
+
+function list() { # list installed packages
+	if present ~/.sys2cyg/installed/; then
+		echo "Installed Packages:"
+		local packages=$(ls -1 ~/.sys2cyg/installed/)
+		echo "$packages" |
+			remove_prefix |
+			pretty_version |
+			indent
+
+		echo
+
+		local num_installed=$(echo "$packages" | count_lines)
+		if [[ $num_installed == 1 ]]; then
+			echo "1 installed package."
+		else
+			echo "$num_installed installed packages."
+		fi
+	else
+		echo "No installed packages."
+	fi
+}
+
+function search() { # search for a package
+	local search_text=$1
+
+	check_index
+
+	local found=$(ls -1 ~/.sys2cyg/index/ |
+		grep "$PACKAGE_PREFIX" |
+		remove_prefix |
+		grep "$search_text")
+
+	if [ "$found" ]; then
+		echo "Found packages:"
+		echo "$found" |
+			pretty_version |
+			indent
+
+		local num_found=$(echo -n "$found" | count_lines)
+		local total=$(ls -1 ~/.sys2cyg/index/ | grep "$PACKAGE_PREFIX" | count_lines)
+		echo
+		echo "$num_found out of $total packages meet the search criteria."
+	else
+		echo "No packages found."
+	fi
+}
+
+function uninstall() { # uninstall a package
+	local package_name=$1
+
+	check_index
+
+	local full_package_name
+	full_package_name=$(infer_package $package_name)
+
+	if ! present ~/.sys2cyg/installed/$full_package_name; then
+		echo_err "Package $package_name is not installed. Cannot proceed."
+		exit 1
+	fi
+
+	local pretty_name=$(echo $full_package_name | remove_prefix | pretty_version)
+
+	if [[ -f ~/.sys2cyg/index/$full_package_name/dependents ]]; then
+		local packages=$(ls -1 ~/.sys2cyg/installed/ |
+			grep -f ~/.sys2cyg/index/$full_package_name/dependents |
+			remove_prefix |
+			pretty_version |
+			indent)
+
+		if [[ -n $packages ]]; then
+			echo_err "Cannot uninstalled package $pretty_name."
+			echo_err "The following packages depend on it:"
+			echo "$packages" >&2
+			echo_err
+			echo_err "Uninstall the listed packages first."
+			exit 1
+		fi
+	fi
+
+	echo_err "Package $pretty_name will be uninstalled."
+	read -ep "Proceed? (y/n) " yn
+	case $yn in
+	[Yy]*) ;;
+	*)
+		echo "Uninstall cancelled."
+		exit 1
+		;;
+	esac
+
+	if [[ ! -f ~/.sys2cyg/installed/$full_package_name/files ]]; then
+		echo_err "Missing files list for package $package_name."
+		echo_err "Installation may be corrupt."
+		exit 1
+	fi
+
+	echo
+
+	echo -n "Uninstalling ... "
+	while read line; do
+		if [[ -f $line ]]; then # file exists
+			rm "$line"
+		elif [[ -d $line && ! "$(ls -A $line)" ]]; then # folder exists and is not empty
+			rmdir "$line"
+		fi
+	done <<<$(tac ~/.sys2cyg/installed/$full_package_name/files)
+	# files list is read backwards to avoid deleting folders before files
+
+	rm -r ~/.sys2cyg/installed/$full_package_name/
+
+	echo "done."
+}
+
+function update() { # update the package index
+	echo -n "Updating MSYS2 MinGW-$MINGW_TYPE package index ... "
+	mkdir --parents ~/.sys2cyg/index/ &&
+		curl --silent --location "$REPO/$MSYS2_PREFIX.files.tar.gz" |
+		gzip --decompress | tar --extract --directory ~/.sys2cyg/index/ &&
+		echo "done." || echo_err "update failed."
+}
+
+function url() { # navigate to a package's url
+	local package_name=$1
+
+	check_index
+
+	local full_package_name
+	full_package_name=$(infer_package $package_name)
+
+	local desc_file
+	desc_file=$(get_desc_file $full_package_name)
+
+	declare -a urls=()
+	parse_desc urls "URL" "$desc_file"
+	local url=${urls[0]}
+	if [[ -z $url ]]; then
+		echo_err "Package $package_name has no URL."
+		exit 1
+	fi
+
+	echo "Navigating to $url"
+	cygstart "${url}"
+}
+
+## end commands ##
+
+command_name=$1
+argument=$2
+
+case $command_name in
+"" | "-h" | "--help" | "help")
+	help
+	;;
+"info")
+	required $command_name 1 $@
+	info $argument
+	;;
+"i" | "install")
+	required $command_name 1 $@
+	install $argument
+	;;
+"list")
+	required $command_name 0 $@
+	list
+	;;
+"search")
+	required $command_name 1 $@
+	search $argument
+	;;
+"uninstall")
+	required $command_name 1 $@
+	uninstall $argument
+	;;
+"update")
+	required $command_name 0 $@
+	update
+	;;
+"url")
+	required $command_name 1 $@
+	url $argument
+	;;
+*)
+	echo_err "Invalid command - $command_name."
+	echo
+	help
+	;;
+esac
