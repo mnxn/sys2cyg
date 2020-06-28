@@ -236,7 +236,7 @@ function collect_dependencies() { # collects the entire dependency tree given a 
 			continue
 		fi
 
-		dependency=$(infer_package $(echo $dependency | sed 's/(<|>)?=?/-/'))
+		dependency=$(infer_package $(echo $dependency | sed --regexp-extended 's/<>|<=|>|>=|=/-/'))
 		add_dependent "$dependency" "$full_package_name"
 		if ! contains dependencies_output "$dependency"; then
 			collect_dependencies $dependency $2 $3
