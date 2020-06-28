@@ -266,7 +266,7 @@ function info() { #  show information about the package
 	local desc_file
 	desc_file=$(get_desc_file $full_package_name)
 
-	echo "Package $package_name:"
+	echo "Package $(echo $full_package_name | short_name):"
 
 	declare -a version=()
 	parse_desc version "VERSION" "$desc_file"
@@ -503,7 +503,7 @@ function uninstall() { # uninstall a package
 	fi
 
 	echo_err "Package $pretty_name will be uninstalled."
-	read -ep "Proceed? (y/n) " yn
+	read -ep "Continue? (y/n) " yn
 	case $yn in
 	[Yy]*) ;;
 	*)
