@@ -355,7 +355,7 @@ function install() { # download and install a package
 		case $yn in
 		[Yy]*) echo ;;
 		*)
-			echo "Installation cancelled."
+			echo "Install cancelled."
 			exit 1
 			;;
 		esac
