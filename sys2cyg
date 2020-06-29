@@ -236,7 +236,7 @@ function collect_dependencies() { # collects the entire dependency tree given a 
 			continue
 		fi
 
-		dependency=$(infer_package $(echo $dependency | sed --regexp-extended 's/<>|<=|>|>=|=/-/'))
+		dependency=$(infer_package $(echo $dependency | sed --regexp-extended 's/<|<=|>|>=|=/-/'))
 		add_dependent "$dependency" "$full_package_name"
 		if ! contains dependencies_output "$dependency"; then
 			collect_dependencies $dependency $2 $3
@@ -333,7 +333,7 @@ function install() { # download and install a package
 	for conflict in "${conflicts[@]}"; do
 		if present ~/.sys2cyg/installed/; then
 			local conflicting=$(ls -1 ~/.sys2cyg/installed/ |
-				sed 's/(<|>)?=?/-/' |
+				sed --regexp-extended 's/<|<=|>|>=|=/-/' |
 				grep --line-regexp --extended-regexp "$conflict\-[^-]+\-[^-]+")
 
 			if [[ -n $conflicting ]]; then
