@@ -57,7 +57,7 @@ Set the `MINGW_TYPE` environmental variable to `32` to use the 32-bit MinGW pack
 
 Although both Cygwin and MSYS2 provide a suitable environment for POSIX-like development, they diverge in the amount of up-to-date MinGW libraries. Cygwin has [about 400 MinGW-64 packages](https://cygwin.com/packages/package_list.html) while MSYS2 has [about 1500](http://repo.msys2.org/mingw/x86_64/).
 
-I realized this difference when writing a LLVM-based compiler with OCaml on Windows. The [most supported versions](https://ocaml.org/docs/install.html#Windows) of Windows OCaml use Cygwin as POSIX emulation layer instead of MSYS2. The Cygwin build of LLVM has been stuck on [version 5.0.1](https://cygwin.com/packages/summary/mingw64-x86_64-llvm.html) for a couple years now, while the MSYS2 build is already on the latest [version 10.0.0](https://cygwin.com/packages/summary/mingw64-x86_64-llvm.html). sys2cyg allows one to easily use the MSYS2-built libraries in situations where it is not feasible to switch the entire toolchain to MSYS2.
+I realized this difference when writing a LLVM-based compiler with OCaml on Windows. The [most supported versions](https://ocaml.org/docs/install.html#Windows) of Windows OCaml use Cygwin as POSIX emulation layer instead of MSYS2. The Cygwin build of LLVM has been stuck on [version 5.0.1](https://cygwin.com/packages/summary/mingw64-x86_64-llvm.html) for a couple years now, while the MSYS2 build is already on the latest [version 10.0.0](https://packages.msys2.org/package/mingw-w64-x86_64-llvm). sys2cyg allows one to easily use the MSYS2-built libraries in situations where it is not feasible to switch the entire toolchain to MSYS2.
 
 ## Example
 
