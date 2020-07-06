@@ -162,7 +162,7 @@ function infer_package() { # infers the full package name given a short name
 			--extended-regexp "($PACKAGE_PREFIX-)?$package_name(\-git)?(\-[^-]+)?(\-[^-]+)?")
 
 	if [[ -n $exact ]]; then
-		echo $exact
+		echo "$exact" | tail -1 # use last result if multiple versions, should be latest version
 	else
 		echo_err "Could not find package $package_name."
 
@@ -325,7 +325,7 @@ function install() { # download and install a package
 	declare -a dependencies
 	declare -a conflicts
 	echo -n "Collecting dependencies, please wait ... "
-	collect_dependencies $full_package_name dependencies conflicts
+	collect_dependencies "$full_package_name" dependencies conflicts
 	echo "done."
 	echo
 
