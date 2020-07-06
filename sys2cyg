@@ -584,11 +584,11 @@ case $command_name in
 	required $command_name 1 $@
 	install $argument
 	;;
-"list")
+"l" | "list")
 	required $command_name 0 $@
 	list
 	;;
-"search")
+"s" | "search")
 	required $command_name 1 $@
 	search $argument
 	;;
