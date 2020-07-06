@@ -173,6 +173,7 @@ function infer_package() { # infers the full package name given a short name
 			echo_err "Possible packages:"
 			echo "$possible" |
 				short_name |
+				uniq |
 				tr '\n' ' ' |
 				indent >&2
 		fi
