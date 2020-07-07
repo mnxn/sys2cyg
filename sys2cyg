@@ -23,12 +23,12 @@ Set the \$MINGW_TYPE environmental variable to 32 to use the 32-bit MinGW packag
 MINGW_TYPE=${MINGW_TYPE:-64}
 if [[ $MINGW_TYPE == 64 ]]; then
 	REPO="http://repo.msys2.org/mingw/x86_64"
-	MSYS2_PREFIX="mingw64"
+	MINGW_PREFIX="mingw64"
 	PACKAGE_PREFIX="mingw-w64-x86_64"
 	INSTALL_PREFIX=/usr/x86_64-w64-mingw32/sys-root/mingw/
 elif [[ $MINGW_TYPE == 32 ]]; then
 	REPO="http://repo.msys2.org/mingw/i686"
-	MSYS2_PREFIX="mingw32"
+	MINGW_PREFIX="mingw32"
 	PACKAGE_PREFIX="mingw-w64-i686"
 	INSTALL_PREFIX=/usr/i686-w64-mingw32/sys-root/mingw/
 else
@@ -110,7 +110,7 @@ function optional_version() { # pretty print the package given an optional versi
 }
 
 function check_index() { # checks that the index has been downloaded
-	if ! present ~/.sys2cyg/index/; then
+	if ! present ~/.sys2cyg/$MINGW_PREFIX/index/; then
 		echo_err "The package index has not been downloaded. Run sys2cyg update."
 		exit 1
 	fi
@@ -119,7 +119,7 @@ function check_index() { # checks that the index has been downloaded
 function get_desc_file() { # returns the description file given a full package name
 	local full_package_name=$1
 
-	local desc_file=~/.sys2cyg/index/$full_package_name/desc
+	local desc_file=~/.sys2cyg/$MINGW_PREFIX/index/$full_package_name/desc
 
 	if [[ ! -f "$desc_file" ]]; then
 		echo_err "Missing description file for package $full_package_name. Has the index been updated?"
@@ -157,7 +157,7 @@ function short_name() { # gets the short name given a full package name with ver
 function infer_package() { # infers the full package name given a short name
 	local package_name=$1
 
-	local exact=$(ls -1 ~/.sys2cyg/index/ |
+	local exact=$(ls -1 ~/.sys2cyg/$MINGW_PREFIX/index/ |
 		grep --line-regexp \
 			--extended-regexp "($PACKAGE_PREFIX-)?$package_name(\-git)?(\-[^-]+)?(\-[^-]+)?")
 
@@ -166,7 +166,7 @@ function infer_package() { # infers the full package name given a short name
 	else
 		echo_err "Could not find package $package_name."
 
-		local possible=$(ls -1 ~/.sys2cyg/index/ |
+		local possible=$(ls -1 ~/.sys2cyg/$MINGW_PREFIX/index/ |
 			grep --extended-regexp "$PACKAGE_PREFIX-$package_name")
 		if [[ -n $possible ]]; then
 			echo_err
@@ -187,14 +187,14 @@ function is_dependent() { # checks if a package is a dependent of another
 
 	check_index
 
-	if ! present ~/.sys2cyg/index/$full_package_name/; then
+	if ! present ~/.sys2cyg/$MINGW_PREFIX/index/$full_package_name/; then
 		echo_err "Missing installation entry for package $full_package_name."
 		echo_err "Installation may be corrupt."
 		exit 1
 	fi
 
-	[[ -f ~/.sys2cyg/index/$full_package_name/dependents && \
-	$(cat ~/.sys2cyg/index/$full_package_name/dependents |
+	[[ -f ~/.sys2cyg/$MINGW_PREFIX/index/$full_package_name/dependents && \
+	$(cat ~/.sys2cyg/$MINGW_PREFIX/index/$full_package_name/dependents |
 		grep --line-regexp "$possible_dependent" |
 		count_lines) > 0 ]]
 }
@@ -205,14 +205,14 @@ function add_dependent() { # adds a dependent to the dependents list for a packa
 
 	check_index
 
-	if ! present ~/.sys2cyg/index/$full_package_name/; then
+	if ! present ~/.sys2cyg/$MINGW_PREFIX/index/$full_package_name/; then
 		echo_err "Missing installation entry for package $full_package_name."
 		echo_err "Installation may be corrupt."
 		exit 1
 	fi
 
 	if ! is_dependent "$full_package_name" "$dependent"; then
-		echo $dependent >>~/.sys2cyg/index/$full_package_name/dependents
+		echo $dependent >>~/.sys2cyg/$MINGW_PREFIX/index/$full_package_name/dependents
 	fi
 }
 
@@ -332,8 +332,8 @@ function install() { # download and install a package
 
 	local have_conflicting=false
 	for conflict in "${conflicts[@]}"; do
-		if present ~/.sys2cyg/installed/; then
-			local conflicting=$(ls -1 ~/.sys2cyg/installed/ |
+		if present ~/.sys2cyg/$MINGW_PREFIX/installed/; then
+			local conflicting=$(ls -1 ~/.sys2cyg/$MINGW_PREFIX/installed/ |
 				sed --regexp-extended 's/<|<=|>|>=|=/-/' |
 				grep --line-regexp --extended-regexp "$conflict\-[^-]+\-[^-]+")
 
@@ -411,7 +411,7 @@ function install() { # download and install a package
 
 		echo -n "Installing $(echo $package | remove_prefix | pretty_version) ... "
 		mkdir --parents $INSTALL_PREFIX &&
-			mkdir --parents ~/.sys2cyg/installed/$package &&
+			mkdir --parents ~/.sys2cyg/$MINGW_PREFIX/installed/$package &&
 			curl --silent --location $archive_url |
 			$decompress |
 				tar --extract --verbose \
@@ -419,15 +419,15 @@ function install() { # download and install a package
 					--strip-components 1 \
 					--directory $INSTALL_PREFIX |
 				sed "s|^|$INSTALL_PREFIX|" \
-					>~/.sys2cyg/installed/$package/files &&
+					>~/.sys2cyg/$MINGW_PREFIX/installed/$package/files &&
 			echo "done." || echo_err "installation failed."
 	done
 }
 
 function list() { # list installed packages
-	if present ~/.sys2cyg/installed/; then
+	if present ~/.sys2cyg/$MINGW_PREFIX/installed/; then
 		echo "Installed Packages:"
-		local packages=$(ls -1 ~/.sys2cyg/installed/)
+		local packages=$(ls -1 ~/.sys2cyg/$MINGW_PREFIX/installed/)
 		echo "$packages" |
 			remove_prefix |
 			pretty_version |
@@ -451,7 +451,7 @@ function search() { # search for a package
 
 	check_index
 
-	local found=$(ls -1 ~/.sys2cyg/index/ |
+	local found=$(ls -1 ~/.sys2cyg/$MINGW_PREFIX/index/ |
 		grep "$PACKAGE_PREFIX" |
 		remove_prefix |
 		grep "$search_text")
@@ -463,7 +463,7 @@ function search() { # search for a package
 			indent
 
 		local num_found=$(echo -n "$found" | count_lines)
-		local total=$(ls -1 ~/.sys2cyg/index/ | grep "$PACKAGE_PREFIX" | count_lines)
+		local total=$(ls -1 ~/.sys2cyg/$MINGW_PREFIX/index/ | grep "$PACKAGE_PREFIX" | count_lines)
 		echo
 		echo "$num_found out of $total packages meet the search criteria."
 	else
@@ -479,16 +479,16 @@ function uninstall() { # uninstall a package
 	local full_package_name
 	full_package_name=$(infer_package $package_name)
 
-	if ! present ~/.sys2cyg/installed/$full_package_name; then
+	if ! present ~/.sys2cyg/$MINGW_PREFIX/installed/$full_package_name; then
 		echo_err "Package $package_name is not installed. Cannot proceed."
 		exit 1
 	fi
 
 	local pretty_name=$(echo $full_package_name | remove_prefix | pretty_version)
 
-	if [[ -f ~/.sys2cyg/index/$full_package_name/dependents ]]; then
-		local packages=$(ls -1 ~/.sys2cyg/installed/ |
-			grep -f ~/.sys2cyg/index/$full_package_name/dependents |
+	if [[ -f ~/.sys2cyg/$MINGW_PREFIX/index/$full_package_name/dependents ]]; then
+		local packages=$(ls -1 ~/.sys2cyg/$MINGW_PREFIX/installed/ |
+			grep -f ~/.sys2cyg/$MINGW_PREFIX/index/$full_package_name/dependents |
 			remove_prefix |
 			pretty_version |
 			indent)
@@ -513,7 +513,7 @@ function uninstall() { # uninstall a package
 		;;
 	esac
 
-	if [[ ! -f ~/.sys2cyg/installed/$full_package_name/files ]]; then
+	if [[ ! -f ~/.sys2cyg/$MINGW_PREFIX/installed/$full_package_name/files ]]; then
 		echo_err "Missing files list for package $package_name."
 		echo_err "Installation may be corrupt."
 		exit 1
@@ -528,19 +528,19 @@ function uninstall() { # uninstall a package
 		elif [[ -d $line && ! "$(ls -A $line)" ]]; then # folder exists and is not empty
 			rmdir "$line"
 		fi
-	done <<<$(tac ~/.sys2cyg/installed/$full_package_name/files)
+	done <<<$(tac ~/.sys2cyg/$MINGW_PREFIX/installed/$full_package_name/files)
 	# files list is read backwards to avoid deleting folders before files
 
-	rm -r ~/.sys2cyg/installed/$full_package_name/
+	rm -r ~/.sys2cyg/$MINGW_PREFIX/installed/$full_package_name/
 
 	echo "done."
 }
 
 function update() { # update the package index
 	echo -n "Updating MSYS2 MinGW-$MINGW_TYPE package index ... "
-	mkdir --parents ~/.sys2cyg/index/ &&
-		curl --silent --location "$REPO/$MSYS2_PREFIX.files.tar.gz" |
-		gzip --decompress | tar --extract --directory ~/.sys2cyg/index/ &&
+	mkdir --parents ~/.sys2cyg/$MINGW_PREFIX/index/ &&
+		curl --silent --location "$REPO/$MINGW_PREFIX.files.tar.gz" |
+		gzip --decompress | tar --extract --directory ~/.sys2cyg/$MINGW_PREFIX/index/ &&
 		echo "done." || echo_err "update failed."
 }
 
