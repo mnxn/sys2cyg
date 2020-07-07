@@ -46,7 +46,7 @@ The recommended usage is to install C libraries from the MSYS2 repository with s
 
 If sys2cyg installs an MSYS2 package that overwrites the files of a Cygwin package, uninstalling the MSYS2 package with sys2cyg may break the functionality of the pre-existing Cygwin package.
 In that case, it will be necessary to repair the Cygwin package with the Cygwin setup utility.
-A few MSYS2 packages that are known to overwrite Cygwin files are `binutils`, `gcc`, `gcc-libs`, `headers`, `windows-default-manifest`, `libwinpthread` and `winpthreads`.
+A few MSYS2 packages that are known to overwrite Cygwin files are `binutils`, `gcc`, `gcc-libs`, `crt`, `headers`, `windows-default-manifest`, `libwinpthread` and `winpthreads`.
 
 ## MINGW_TYPE Differences
 

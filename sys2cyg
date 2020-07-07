@@ -25,11 +25,13 @@ if [[ $MINGW_TYPE == 64 ]]; then
 	REPO="http://repo.msys2.org/mingw/x86_64"
 	MINGW_PREFIX="mingw64"
 	PACKAGE_PREFIX="mingw-w64-x86_64"
+	CYGWIN_PACKAGE_PREFIX="mingw64-x86_64"
 	INSTALL_PREFIX=/usr/x86_64-w64-mingw32/sys-root/mingw/
 elif [[ $MINGW_TYPE == 32 ]]; then
 	REPO="http://repo.msys2.org/mingw/i686"
 	MINGW_PREFIX="mingw32"
 	PACKAGE_PREFIX="mingw-w64-i686"
+	CYGWIN_PACKAGE_PREFIX="mingw64-i686"
 	INSTALL_PREFIX=/usr/i686-w64-mingw32/sys-root/mingw/
 else
 	echo "Invalid \$MINGW_TYPE - $MINGW_TYPE." >&2
@@ -93,11 +95,11 @@ function indent() { # indents each line with a tab
 	sed 's/^/\t/'
 }
 
-function add_prefix() { # adds the MinGW prefix
+function add_prefix() { # adds the MSYS2 MinGW prefix
 	sed "s/^/$PACKAGE_PREFIX-/"
 }
 
-function remove_prefix() { # removes the MinGW prefix
+function remove_prefix() { # removes the MSYS2 MinGW prefix
 	sed "s/$PACKAGE_PREFIX-//"
 }
 
@@ -107,6 +109,14 @@ function pretty_version() { # pretty print the package with its version given a 
 
 function optional_version() { # pretty print the package given an optional version suffix
 	sed --regexp-extended 's/(.*)=(.*-.*)/\1 (version \2)/'
+}
+
+function add_cygwin_prefix() { # adds the Cygwin MinGW prefix
+	sed "s/^/$CYGWIN_PACKAGE_PREFIX-/"
+}
+
+function remove_cygwin_prefix() { # removes the Cygwin MinGW prefix
+	sed "s/$CYGWIN_PACKAGE_PREFIX-//"
 }
 
 function check_index() { # checks that the index has been downloaded
@@ -159,10 +169,11 @@ function infer_package() { # infers the full package name given a short name
 
 	local exact=$(ls -1 ~/.sys2cyg/$MINGW_PREFIX/index/ |
 		grep --line-regexp \
-			--extended-regexp "($PACKAGE_PREFIX-)?$package_name(\-git)?(\-[^-]+)?(\-[^-]+)?")
+			--extended-regexp "($PACKAGE_PREFIX-)?$package_name(\-git)?(\-[^-]+)?(\-[^-]+)?" |
+		tail -1) # use last result if multiple versions, should be latest version
 
 	if [[ -n $exact ]]; then
-		echo "$exact" | tail -1 # use last result if multiple versions, should be latest version
+		echo "$exact"
 	else
 		echo_err "Could not find package $package_name."
 
@@ -233,7 +244,7 @@ function collect_dependencies() { # collects the entire dependency tree given a 
 
 	for dependency in "${local_dependencies[@]}"; do
 		if [[ $dependency == "winpty" ]]; then
-			echo_err "WARNING: This packages depends on winpty. winpty must be installed from Cygwin setup."
+			dependencies_output+=("winpty")
 			continue
 		fi
 
@@ -246,6 +257,57 @@ function collect_dependencies() { # collects the entire dependency tree given a 
 
 	dependencies_output+=("$full_package_name")
 	conflicts_output+=("${local_conflicts[@]}")
+}
+
+function seperate_installed() {
+	local -n dependencies_input=$1
+	local -n installed_output=$2
+	local -n not_installed_output=$3
+
+	for dependency in "${dependencies_input[@]}"; do
+		if [[ $dependency == "winpty" ]]; then
+			echo_err
+			echo_err "WARNING: A package depends on winpty. winpty must be installed from Cygwin setup."
+			continue
+		fi
+
+		local short_dependency_name=$(echo $dependency | short_name | sed 's/-git$//')
+
+		local exact_msys2=$(ls -1 ~/.sys2cyg/$MINGW_PREFIX/installed/ |
+			grep --line-regexp \
+				--extended-regexp "$PACKAGE_PREFIX-$short_dependency_name(\-git)?\-[^-]+\-[^-]+" |
+			tail -1)
+		if [[ -n "$exact_msys2" ]]; then
+			installed_output+=("$(echo "$exact_msys2" |
+				remove_prefix |
+				pretty_version)")
+			continue
+		fi
+
+		local short_cygwin_name=$(echo "$short_dependency_name" |
+			sed --regexp-extended 's/^crt$/runtime/' |
+			sed --regexp-extended 's/^gcc$/gcc-core/' |
+			sed --regexp-extended 's/^gcc-libs$/gcc-core/' |
+			sed --regexp-extended 's/^libwinpthread$/winpthreads/')
+
+		local exact_cygwin=$(cygcheck -dc |
+			grep --line-regexp \
+				--extended-regexp "^$CYGWIN_PACKAGE_PREFIX-$short_cygwin_name\s+[^-]+\-[^-]+" |
+			tail -1)
+		if [[ -n "$exact_cygwin" && $short_dependency_name != $short_cygwin_name ]]; then
+			installed_output+=("$(echo "$exact_cygwin" |
+				remove_cygwin_prefix |
+				sed --regexp-extended "s/([^ ]*)\s+(.*-.*)/$short_dependency_name (version \2) [\1 from Cygwin]/")")
+			continue
+		elif [[ -n "$exact_cygwin" && $short_dependency_name == $short_cygwin_name ]]; then
+			installed_output+=("$(echo "$exact_cygwin" |
+				remove_cygwin_prefix |
+				sed --regexp-extended "s/([^ ]*)\s+(.*-.*)/\1 (version \2) [Cygwin]/")")
+			continue
+		fi
+
+		not_installed_output+=("$dependency")
+	done
 }
 
 ## end helper functions ##
@@ -323,12 +385,11 @@ function install() { # download and install a package
 	local full_package_name
 	full_package_name=$(infer_package $package_name)
 
-	declare -a dependencies
-	declare -a conflicts
+	declare -a dependencies=()
+	declare -a conflicts=()
 	echo -n "Collecting dependencies, please wait ... "
 	collect_dependencies "$full_package_name" dependencies conflicts
 	echo "done."
-	echo
 
 	local have_conflicting=false
 	for conflict in "${conflicts[@]}"; do
@@ -338,6 +399,7 @@ function install() { # download and install a package
 				grep --line-regexp --extended-regexp "$conflict\-[^-]+\-[^-]+")
 
 			if [[ -n $conflicting ]]; then
+				echo_err
 				echo_err "Installed packages have conflicts with package $(echo $full_package_name |
 					remove_prefix |
 					pretty_version):"
@@ -362,15 +424,37 @@ function install() { # download and install a package
 		esac
 	fi
 
-	if [[ ${#dependencies[@]} > 1 ]]; then
-		echo "${#dependencies[@]} packages will be installed:"
-		printf '\t%s\n' "${dependencies[@]}" |
+	echo -n "Checking installed packages, please wait ... "
+	declare -a installed=()
+	declare -a not_installed=()
+	seperate_installed dependencies installed not_installed
+	echo "done."
+
+	echo
+
+	if [[ ${#installed[@]} == 1 ]]; then
+		echo "1 package is already installed:"
+		printf '\t%s\n' "${installed[@]}"
+		echo
+	elif [[ ${#installed[@]} > 1 ]]; then
+		echo "${#installed[@]} packages are already installed:"
+		printf '\t%s\n' "${installed[@]}"
+		echo
+	fi
+
+	if [[ ${#not_installed[@]} == 1 ]]; then
+		echo "$(echo $full_package_name | remove_prefix | pretty_version) will be installed."
+	elif [[ ${#not_installed[@]} > 1 ]]; then
+		echo "${#not_installed[@]} packages will be installed:"
+		printf '\t%s\n' "${not_installed[@]}" |
 			remove_prefix |
 			pretty_version
 	else
-		echo "$(echo $full_package_name | remove_prefix | pretty_version) will be installed."
+		echo "No new packages to install."
+		exit 1
 	fi
 
+	echo
 	read -ep "Continue? (y/n) " yn
 	case $yn in
 	[Yy]*) ;;
@@ -382,7 +466,7 @@ function install() { # download and install a package
 
 	echo
 
-	for package in "${dependencies[@]}"; do
+	for package in "${not_installed[@]}"; do
 		local desc_file=
 		desc_file=$(get_desc_file $package)
 
