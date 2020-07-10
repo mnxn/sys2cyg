@@ -61,6 +61,22 @@ function contains() { # check if an array contains an element
 	return 1
 }
 
+function reverse() { # reverse an array
+	local -n local_array=$1
+
+	local min=0
+	local max=$((${#local_array[@]} - 1))
+
+	while [[ min -lt max ]]; do
+		local temp="${local_array[$min]}"
+		local_array[$min]="${local_array[$max]}"
+		local_array[$max]="$temp"
+
+		min=$((min + 1))
+		max=$((max - 1))
+	done
+}
+
 function present() { # checks that a folder exists and is not empty
 	local directory=$1
 
@@ -243,6 +259,8 @@ function collect_dependencies() { # collects the entire dependency tree given a 
 	declare -a local_conflicts=()
 	parse_desc local_conflicts "CONFLICTS" "$desc_file"
 
+	dependencies_output+=("$full_package_name")
+
 	for dependency in "${local_dependencies[@]}"; do
 		if [[ $dependency == "winpty" ]]; then
 			dependencies_output+=("winpty")
@@ -259,7 +277,6 @@ function collect_dependencies() { # collects the entire dependency tree given a 
 		fi
 	done
 
-	dependencies_output+=("$full_package_name")
 	conflicts_output+=($(printf "%s\n" "${local_conflicts[@]}" |
 		sed --regexp-extended 's/<=|>=|=/-/' |
 		sed --regexp-extended 's/.*(<|>).*//'))
@@ -277,9 +294,9 @@ function seperate_installed() {
 			continue
 		fi
 
-		if present ~/.sys2cyg/$MINGW_PREFIX/installed/; then
-			local short_dependency_name=$(echo $dependency | short_name)
+		local short_dependency_name=$(echo $dependency | short_name)
 
+		if present ~/.sys2cyg/$MINGW_PREFIX/installed/; then
 			local exact_msys2=$(ls -1 ~/.sys2cyg/$MINGW_PREFIX/installed/ |
 				grep --line-regexp "$PACKAGE_PREFIX-$short_dependency_name-[^-]\{1,\}-[^-]\{1,\}" |
 				tail -1)
@@ -289,28 +306,28 @@ function seperate_installed() {
 					pretty_version)")
 				continue
 			fi
+		fi
 
-			local short_cygwin_name=$(echo "$short_dependency_name" |
-				sed --regexp-extended 's/-git$//' |
-				sed --regexp-extended 's/^gcc$/gcc-core/' |
-				sed --regexp-extended 's/^gcc-libs$/gcc-core/' |
-				sed --regexp-extended 's/^crt$/runtime/' |
-				sed --regexp-extended 's/^libwinpthread$/winpthreads/')
+		local short_cygwin_name=$(echo "$short_dependency_name" |
+			sed --regexp-extended 's/-git$//' |
+			sed --regexp-extended 's/^gcc$/gcc-core/' |
+			sed --regexp-extended 's/^gcc-libs$/gcc-core/' |
+			sed --regexp-extended 's/^crt$/runtime/' |
+			sed --regexp-extended 's/^libwinpthread$/winpthreads/')
 
-			local exact_cygwin=$(cygcheck -dc |
-				grep --line-regexp "$CYGWIN_PACKAGE_PREFIX-$short_cygwin_name\s\{1,\}[^-]\{1,\}-[^-]\{1,\}" |
-				tail -1)
-			if [[ -n "$exact_cygwin" && $short_dependency_name != $short_cygwin_name ]]; then
-				installed_output+=("$(echo "$exact_cygwin" |
-					remove_cygwin_prefix |
-					sed --regexp-extended "s/([^ ]*)\s+(.*-.*)/$short_dependency_name (version \2) [\1 from Cygwin]/")")
-				continue
-			elif [[ -n "$exact_cygwin" && $short_dependency_name == $short_cygwin_name ]]; then
-				installed_output+=("$(echo "$exact_cygwin" |
-					remove_cygwin_prefix |
-					sed --regexp-extended "s/([^ ]*)\s+(.*-.*)/\1 (version \2) [Cygwin]/")")
-				continue
-			fi
+		local exact_cygwin=$(cygcheck -dc |
+			grep --line-regexp "$CYGWIN_PACKAGE_PREFIX-$short_cygwin_name\s\{1,\}[^-]\{1,\}-[^-]\{1,\}" |
+			tail -1)
+		if [[ -n "$exact_cygwin" && $short_dependency_name != $short_cygwin_name ]]; then
+			installed_output+=("$(echo "$exact_cygwin" |
+				remove_cygwin_prefix |
+				sed --regexp-extended "s/([^ ]*)\s+(.*-.*)/$short_dependency_name (version \2) [\1 from Cygwin]/")")
+			continue
+		elif [[ -n "$exact_cygwin" && $short_dependency_name == $short_cygwin_name ]]; then
+			installed_output+=("$(echo "$exact_cygwin" |
+				remove_cygwin_prefix |
+				sed --regexp-extended "s/([^ ]*)\s+(.*-.*)/\1 (version \2) [Cygwin]/")")
+			continue
 		fi
 
 		not_installed_output+=("$dependency")
@@ -396,6 +413,7 @@ function install() { # download and install a package
 	declare -a conflicts=()
 	echo -n "Collecting dependencies, please wait ... "
 	collect_dependencies "$full_package_name" dependencies conflicts
+	reverse dependencies
 	echo "done."
 
 	declare -a conflicting_packages=()
