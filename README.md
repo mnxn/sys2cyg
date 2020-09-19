@@ -18,7 +18,7 @@ zstd is required to decompress some of the newer MSYS2 packages.
 sys2cyg can be installed with curl like this:
 
 ```
-curl -o /usr/local/bin/sys2cyg -L https://raw.githubusercontent.com/mnxn/sys2cyg/master/sys2cyg && chmod +x /usr/local/bin/sys2cyg
+curl -o /usr/local/bin/sys2cyg -L https://raw.githubusercontent.com/mnxn/sys2cyg/trunk/sys2cyg && chmod +x /usr/local/bin/sys2cyg
 ```
 
 ## Usage
